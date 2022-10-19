@@ -20,6 +20,7 @@
 #include <Servo.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>
 
 // configure constants
 #define SEALEVELPRESSURE_HPA 1013.25
@@ -120,7 +121,7 @@ void setup() {
   Serial2.println(header);
 
   // Servo configuration
-  SERVO.attach(10); // set servo pin
+  SERVO.attach(10, 500, 2350); // set servo pin and rotation range
 }
 
 void loop() {
@@ -173,7 +174,12 @@ void loop() {
       #endif
       // blink LED
 
-      // fill in with servo code
+      // rotate the servo
+      SERVO.write(500);
+      for (int pos = 500; pos <= 2350; pos++) {
+        SERVO.write(pos);
+        delay(0.5);
+      }
 
       // FS2 -> FS3
       if (SERVO.read() > 1000) {
@@ -212,19 +218,26 @@ void loop() {
 // create packet data
 String csvParams(struct params MP) {
   String c = ",";
+  
+  // time variables
+  float ss = floor(MP.MISSION_TIME / 1000);
+  float mm = floor(ss / 60);
+  float hh = floor(mm / 60);
+  ss = ss / 60;
+  mm = (int) mm % 60;
+  char hours[2];
+  char min[2];
+  char sec[5];
+  sprintf(hours, "%2d", hh);
+  sprintf(min, "%2d", mm);
+  sprintf(sec, "%5f", ss);
+  char mTime[12];
+  strcat(mTime,hours);
+  strcat(mTime,":");
+  strcat(mTime,min);
+  strcat(mTime,":");
+  strcat(mTime,sec);
 
-  // strings to store data
-  char teamID[4];
-  char missionTime[11];
-  char packetCount[5];
-  char flightState[1];
-  char plState[1];
-  char altitude[5];
-  char temp[4];
-  char voltage[3];
-  char lat[10];
-  char lon[10];
-
-  return MP.TEAM_ID + c + MP.MISSION_TIME + c + MP.PACKET_COUNT + c + MP.FLIGHT_STATE + c + MP.PL_STATE + c + MP.ALTITUDE + c + MP.PRESSURE + c + MP.TEMP + c + MP.VOLTAGE + c + MP.GPS_LAT + c + MP.GPS_LON;
+  return MP.TEAM_ID + c + mTime + c + MP.PACKET_COUNT + c + MP.FLIGHT_STATE + c + MP.PL_STATE + c + MP.ALTITUDE + c + MP.PRESSURE + c + MP.TEMP + c + MP.VOLTAGE + c + MP.GPS_LAT + c + MP.GPS_LON;
 }
 
