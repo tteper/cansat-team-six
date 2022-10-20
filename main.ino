@@ -7,8 +7,6 @@
  *  Copyright (c) Space Hardware Club, 2022
  */
 
-#define VERSION 1.0
-
 // sensor testing code
 #include <Wire.h>
 #include <SPI.h>
@@ -29,8 +27,10 @@
 #define PMTK_Q_RELEASE "$PMTK605*31"
 
 // mission params
-#define REFRESH_RATE 1000 / 1 // ms; 5 Hz
-#define ALTITUDE_MAX 400 // altitude to trigger latch
+#define REFRESH_RATE 1000 // ms; 5 Hz
+#define ALTITUDE_MAX 200 // altitude to trigger latch
+
+#define VERSION 1.0
 
 // DEBUG flag
 #define SERIAL_DEBUG true
@@ -40,6 +40,7 @@ uint32_t TIMESTAMP = millis(); // time since POWER ON
 uint32_t START_TIME;           // mission start time
 unsigned int FLIGHT_STATE = 0; // current flight state (DEFAULT: 0)
 float ALT_START;               // variable to hold starting altitude -> calc relative altitude
+unsigned int SENSOR_CNT = 0;   // count variable for LED and buzzer
 
 // communication definitions (all pins are GP#)
 SoftwareSerial GPSSerial(7, 6); // GPS TX -> 7; GPS RX -> 6
@@ -100,7 +101,6 @@ void setup() {
   if (!BMP.begin_I2C()) // try BMP config
   {
     Serial.println("BMP Connection Failed: Check Wiring!");
-    system("pause");
     return;
   }
   // oversampling and filter init
@@ -108,6 +108,8 @@ void setup() {
   BMP.setPressureOversampling(BMP3_OVERSAMPLING_4X);
   BMP.setIIRFilterCoeff(BMP3_IIR_FILTER_COEFF_3);
   BMP.setOutputDataRate(BMP3_ODR_50_HZ);
+
+  delay(500);
   ALT_START = BMP.readAltitude(SEALEVELPRESSURE_HPA); // define altitude datum
 
   // basic configuration variables
@@ -122,6 +124,8 @@ void setup() {
 
   // Servo configuration
   SERVO.attach(10, 500, 2350); // set servo pin and rotation range
+  pinMode(BUZZER, OUTPUT);     // set buzzer pins
+  pinMode(LED, OUTPUT);        // set led pins
 }
 
 void loop() {
@@ -146,12 +150,11 @@ void loop() {
   // main execution code
   switch (MISSION_PARAMS.FLIGHT_STATE) {
     case 0: // IDLE
-      Serial1.println(packetString);
+      // wait for command to set flight state
       MISSION_PARAMS.FLIGHT_STATE = 1;
       #ifdef SERIAL_DEBUG
         Serial.println(packetString);
       #endif
-      // blink LED
       break;
     case 1: // ASCENT
       Serial1.println(packetString);
@@ -159,53 +162,47 @@ void loop() {
       #ifdef SERIAL_DEBUG
         Serial.println(packetString);
       #endif
-      // blink LED
       
       // FS1 -> FS2
       if (MISSION_PARAMS.ALTITUDE > ALTITUDE_MAX) {
         MISSION_PARAMS.FLIGHT_STATE = 2; // drop stage
+
+        // rotate the servo
+        SERVO.write(2350);
+        for (int pos = 2350; pos >= 500; --pos) {
+          SERVO.write(pos);
+          delay(0.5);
+        }
+
+        // TESTING
+        tone(BUZZER, 1000);
+        delay(1001);
+        noTone(BUZZER);      
       }
       break;
-    case 2: // DROP
+    case 2: // DESCENT
       Serial1.println(packetString);
       Serial2.println(packetString);
       #ifdef SERIAL_DEBUG
         Serial.println(packetString);
       #endif
-      // blink LED
-
-      // rotate the servo
-      SERVO.write(500);
-      for (int pos = 500; pos <= 2350; pos++) {
-        SERVO.write(pos);
-        delay(0.5);
-      }
-
-      // FS2 -> FS3
-      if (SERVO.read() > 1000) {
-        MISSION_PARAMS.FLIGHT_STATE = 3; // descent stage
-        MISSION_PARAMS.PL_STATE = 'R';   // update payload state to "Released"
-      }
-      break;
-    case 3: // DESCENT
-      Serial1.println(packetString);
-      Serial2.println(packetString);
-      #ifdef SERIAL_DEBUG
-        Serial.println(packetString);
-      #endif
-      // blink LED
 
       // FS3 -> FS4
       if (MISSION_PARAMS.ALTITUDE < 10) {
-        MISSION_PARAMS.FLIGHT_STATE = 4; // landing stage
+        MISSION_PARAMS.FLIGHT_STATE = 3; // landing stage
       }
       break;
-    case 4: // LANDING
+    case 3: // LANDED
       Serial1.println(packetString);
       #ifdef SERIAL_DEBUG
         Serial.println(packetString);
       #endif
-
+      if (SENSOR_CNT % 15 == 0) {
+        tone(BUZZER, 1000);
+      }
+      if (SENSOR_CNT % 20 == 0) {
+        noTone(BUZZER);
+      }
       break;
     default: // IDLE
       #ifdef SERIAL_DEBUG
@@ -213,31 +210,45 @@ void loop() {
       #endif
       break;
   };
+
+  // activate LEDs and buzzer
+  if (SENSOR_CNT % 15 == 0) {
+    digitalWrite(LED, HIGH);
+  }
+  if (SENSOR_CNT % 20 == 0) {
+    digitalWrite(LED, LOW);
+    SENSOR_CNT = 0;
+  }
+
+  SENSOR_CNT++;
 }
 
 // create packet data
 String csvParams(struct params MP) {
   String c = ",";
   
-  // time variables
-  float ss = floor(MP.MISSION_TIME / 1000);
-  float mm = floor(ss / 60);
-  float hh = floor(mm / 60);
-  ss = ss / 60;
-  mm = (int) mm % 60;
-  char hours[2];
-  char min[2];
-  char sec[5];
-  sprintf(hours, "%2d", hh);
-  sprintf(min, "%2d", mm);
-  sprintf(sec, "%5f", ss);
-  char mTime[12];
-  strcat(mTime,hours);
-  strcat(mTime,":");
-  strcat(mTime,min);
-  strcat(mTime,":");
-  strcat(mTime,sec);
+  //time variables
+  // float ss = floor(MP.MISSION_TIME / 1000);
+  // float mm = floor(ss / 60);
+  // float hh = floor(mm / 60);
+  // ss = ss / 60;
+  // mm = (int) mm % 60;
+  // char hours[2];
+  // char min[2];
+  // char sec[5];
+  // sprintf(hours, "%2d", hh);
+  // sprintf(min, "%2d", mm);
+  // sprintf(sec, "%5f", ss);
+  // char mTime[12];
+  // strcat(mTime,hours);
+  // strcat(mTime,":");
+  // strcat(mTime,min);
+  // strcat(mTime,":");
+  // strcat(mTime,sec);
 
-  return MP.TEAM_ID + c + mTime + c + MP.PACKET_COUNT + c + MP.FLIGHT_STATE + c + MP.PL_STATE + c + MP.ALTITUDE + c + MP.PRESSURE + c + MP.TEMP + c + MP.VOLTAGE + c + MP.GPS_LAT + c + MP.GPS_LON;
+//   return MP.TEAM_ID + c + mTime + c + MP.PACKET_COUNT + c + MP.FLIGHT_STATE + c + MP.PL_STATE + c + MP.ALTITUDE + c + MP.PRESSURE + c + MP.TEMP + c + MP.VOLTAGE + c + MP.GPS_LAT + c + MP.GPS_LON;
+// }
+
+  return MP.TEAM_ID + c + MP.MISSION_TIME + c + MP.PACKET_COUNT + c + MP.FLIGHT_STATE + c + MP.PL_STATE + c + MP.ALTITUDE + c + MP.PRESSURE + c + MP.TEMP + c + MP.VOLTAGE + c + MP.GPS_LAT + c + MP.GPS_LON;
 }
 
