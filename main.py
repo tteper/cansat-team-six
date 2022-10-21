@@ -1,10 +1,13 @@
-#
+# GROUND STATION CODE
 import sys
 from pyqtgraph.Qt import QtGui, QtCore, QtWidgets
+import matplotlib.pyplot as plt
 import pyqtgraph as pg
+from PySide6.QtCore import Qt
+from PIL import Image, ImageDraw
 from communication import Communication
 from dataBase import data_base
-from PyQt5.QtWidgets import QPushButton
+from PyQt5.QtWidgets import *
 from graphs.graph_acceleration import graph_acceleration
 from graphs.graph_altitude import graph_altitude
 from graphs.graph_battery import graph_battery
@@ -14,19 +17,32 @@ from graphs.graph_pressure import graph_pressure
 from graphs.graph_speed import graph_speed
 from graphs.graph_temperature import graph_temperature
 from graphs.graph_time import graph_time
+import gps_class
 
-pg.setConfigOption('background', (33, 33, 33))
-pg.setConfigOption('foreground', (197, 198, 199))
+missionStarted = 0
+
+def startMission():
+    ser.write("g")
+    missionStarted = 1
+    print("worked")
+    
+def endMission():
+    ser.write("e")
+
+pg.setConfigOption('background', (255, 255, 255))
+pg.setConfigOption('foreground', (0, 0, 0))
+
 # Interface variables
 app = QtWidgets.QApplication(sys.argv)
 view = pg.GraphicsView()
 Layout = pg.GraphicsLayout()
 view.setCentralItem(Layout)
 view.show()
-view.setWindowTitle('Flight monitoring')
+view.setWindowTitle('Ground Station')
 view.resize(1200, 700)
 
 # declare object for serial Communication
+input("Press enter to connect")
 ser = Communication()
 # declare object for storage in CSV
 data_base = data_base()
@@ -37,59 +53,66 @@ font.setPixelSize(90)
 # buttons style
 style = "background-color:rgb(29, 185, 84);color:rgb(0,0,0);font-size:14px;"
 
-
 # Declare graphs
 # Button 1
-proxy = QtWidgets.QGraphicsProxyWidget()
-save_button = QtWidgets.QPushButton('Start storage')
-save_button.setStyleSheet(style)
-save_button.clicked.connect(data_base.start)
-proxy.setWidget(save_button)
+proxy1 = QtWidgets.QGraphicsProxyWidget()
+start_button = QtWidgets.QPushButton('Start Mission (FS1)')
+start_button.setStyleSheet(style)
+start_button.clicked.connect(startMission)
+proxy1.setWidget(start_button)
 
-# Button 2
+# # Button 2
 proxy2 = QtWidgets.QGraphicsProxyWidget()
-end_save_button = QtWidgets.QPushButton('Stop storage')
-end_save_button.setStyleSheet(style)
-end_save_button.clicked.connect(data_base.stop)
-proxy2.setWidget(end_save_button)
+end_button = QtWidgets.QPushButton('End Mission (FS4)')
+end_button.setStyleSheet(style)
+end_button.clicked.connect(endMission) # reconfig
+proxy2.setWidget(end_button)
 
-# Altitude graph
+# time, voltage widget
+proxy3 = QtWidgets.QGraphicsProxyWidget()
+timeWidget = QtWidgets.QLabel('TIME')
+proxy3.setWidget(timeWidget)
+proxy4 = QtWidgets.QGraphicsProxyWidget()
+voltWidget = QtWidgets.QLabel('VOLTAGE')
+proxy4.setWidget(voltWidget)
+proxy5 = QtWidgets.QGraphicsProxyWidget()
+fsWidget = QtWidgets.QLabel('FS')
+proxy5.setWidget(fsWidget)
+timeWidget.setAlignment(Qt.AlignCenter | Qt.AlignCenter)
+voltWidget.setAlignment(Qt.AlignCenter | Qt.AlignCenter)
+fsWidget.setAlignment(Qt.AlignCenter | Qt.AlignCenter)
+timeWidget.setFont(QtGui.QFont('Arial', 24))
+voltWidget.setFont(QtGui.QFont('Arial', 24))
+fsWidget.setFont(QtGui.QFont('Arial', 24))
+
+# needed graphs: temp, altitude, pressure
 altitude = graph_altitude()
-# Speed graph
-speed = graph_speed()
-# Acceleration graph
-acceleration = graph_acceleration()
-# Gyro graph
-gyro = graph_gyro()
-# Pressure Graph
 pressure = graph_pressure()
-# Temperature graph
 temperature = graph_temperature()
-# Time graph
-time = graph_time(font=font)
-# Battery graph
-battery = graph_battery(font=font)
-# Free fall graph
-free_fall = graph_free_fall(font=font)
 
+# GPS graph
+# gps_map = gps_class.GPSVis(data_path='data.csv',
+#              map_path='map.png',  # Path to map downloaded from the OSM.
+#              points=(-86.6453,34.7358,-86.6320,34.7188)) # Two coordinates of the map (upper left, lower right)
+# gps_map.create_image(color=(0, 0, 255), width=3)  # Set the color and the width of the GNSS tracks.
+# gps_map.plot_map(output='plot')
 
 ## Setting the graphs in the layout 
 # Title at top
 text = """
-Flight monitoring interface for cansats and OBC's <br>
-developed at the Universidad Distrital FJC.
+CANSAT Team 6 Ground Station
 """
 Layout.addLabel(text, col=1, colspan=21)
 Layout.nextRow()
 
 # Put vertical label on left side
-Layout.addLabel('LIDER - ATL research hotbed',
+Layout.addLabel('Flight information',
                 angle=-90, rowspan=3)
                 
 Layout.nextRow()
 
 lb = Layout.addLayout(colspan=21)
-lb.addItem(proxy)
+lb.addItem(proxy1)
 lb.nextCol()
 lb.addItem(proxy2)
 
@@ -100,47 +123,49 @@ l11 = l1.addLayout(rowspan=1, border=(83, 83, 83))
 
 # Altitude, speed
 l11.addItem(altitude)
-l11.addItem(speed)
 l1.nextRow()
 
 # Acceleration, gyro, pressure, temperature
 l12 = l1.addLayout(rowspan=1, border=(83, 83, 83))
-l12.addItem(acceleration)
-l12.addItem(gyro)
 l12.addItem(pressure)
 l12.addItem(temperature)
 
-# Time, battery and free fall graphs
+# # Time, battery and free fall graphs
 l2 = Layout.addLayout(border=(83, 83, 83))
-l2.addItem(time)
+l2.addItem(proxy3)
 l2.nextRow()
-l2.addItem(battery)
+l2.addItem(proxy4)
 l2.nextRow()
-l2.addItem(free_fall)
+l2.addItem(proxy5)
 
 # you have to put the position of the CSV stored in the value_chain list
 # that represent the date you want to visualize
 def update():
     try:
+        # ser.write("g")
         value_chain = []
         value_chain = ser.getData()
-        altitude.update(value_chain[1])
-        speed.update(value_chain[8], value_chain[9], value_chain[10])
-        time.update(value_chain[0])
-        acceleration.update(value_chain[8], value_chain[9], value_chain[10])
-        gyro.update(value_chain[5], value_chain[6], value_chain[7])
-        pressure.update(value_chain[4])
-        temperature.update(value_chain[3])
-        free_fall.update(value_chain[2])
+        altitude.update(value_chain[5])
+        pressure.update(value_chain[6])
+        temperature.update(value_chain[7])
+        timeWidget.setText(value_chain[1])
+        voltWidget.setText(value_chain[8])
+        fsWidget.setText(value_chain[3])
+        proxy3.setWidget(timeWidget)
+        proxy4.setWidget(voltWidget)
+        proxy5.setWidget(fsWidget)
+        # lat.update(value_chain[x]) # get latitude from packet
+        # lon.update(value_chain[y]) # get long from packet
         data_base.guardar(value_chain)
     except IndexError:
         print('starting, please wait a moment')
 
-
-if(ser.isOpen()) or (ser.dummyMode()):
+if(ser.isOpen()):
+    input("press once ready")
+    ser.write("g")
     timer = pg.QtCore.QTimer()
     timer.timeout.connect(update)
-    timer.start(500)
+    timer.start(100)
 else:
     print("something is wrong with the update call")
 # Start Qt event loop unless running in interactive mode.
@@ -148,3 +173,4 @@ else:
 if __name__ == '__main__':
     if (sys.flags.interactive != 1) or not hasattr(QtCore, 'PYQT_VERSION'):
         QtWidgets.QApplication.instance().exec_()
+
