@@ -27,20 +27,22 @@
 #define PMTK_Q_RELEASE "$PMTK605*31"
 
 // mission params
-#define REFRESH_RATE 1000 // ms; 5 Hz
-#define ALTITUDE_MAX 200 // altitude to trigger latch
+#define REFRESH_RATE 200 // ms; 5 Hz
+#define ALTITUDE_MAX 400 // altitude to trigger latch
 
 #define VERSION 1.0
 
 // DEBUG flag
-#define SERIAL_DEBUG true
+#define SERIAL_DEBUG false
 
 // global mission variables
-uint32_t TIMESTAMP = millis(); // time since POWER ON
+uint32_t TIMESTAMP; // time since POWER ON
 uint32_t START_TIME;           // mission start time
 unsigned int FLIGHT_STATE = 0; // current flight state (DEFAULT: 0)
 float ALT_START;               // variable to hold starting altitude -> calc relative altitude
 unsigned int SENSOR_CNT = 0;   // count variable for LED and buzzer
+char MISSION_START_CHAR;       // mission start character
+int pos;                       // servo position
 
 // communication definitions (all pins are GP#)
 SoftwareSerial GPSSerial(7, 6); // GPS TX -> 7; GPS RX -> 6
@@ -54,7 +56,7 @@ Servo SERVO;                    // Servo Pico Pin -> 10
 // data struct for mission information
 struct params {
   const int TEAM_ID = 1006;       // assigned team ID
-  uint32_t MISSION_TIME;          // mission time in format hh:mm:ss.ss
+  uint32_t MISSION_TIME;          // mission time in millis
   unsigned int PACKET_COUNT = 0;  // total count of transmitted packets
   unsigned int FLIGHT_STATE = 0;  // operating state of the software (0 <--> 4)
   char PL_STATE = 'N';            // payload state (N -> not released; R -> released)
@@ -110,11 +112,9 @@ void setup() {
   BMP.setOutputDataRate(BMP3_ODR_50_HZ);
 
   delay(500);
-  ALT_START = BMP.readAltitude(SEALEVELPRESSURE_HPA); // define altitude datum
 
   // basic configuration variables
   String packetString = ""; // packet string
-  START_TIME = TIMESTAMP;   // set the start time to current time for mission start
 
   // Create file header
   String header = "TEAM_ID, MISSION_TIME, PACKET_COUNT, FLIGHT_STATE, PL_STATE, ALTITUDE, TEMP, VOLTAGE, GPS_LAT, GPS_LONG";
@@ -124,6 +124,8 @@ void setup() {
 
   // Servo configuration
   SERVO.attach(10, 500, 2350); // set servo pin and rotation range
+  pos = 2350;
+  SERVO.write(pos);
   pinMode(BUZZER, OUTPUT);     // set buzzer pins
   pinMode(LED, OUTPUT);        // set led pins
 }
@@ -132,26 +134,41 @@ void loop() {
   
   // set refresh rate (DEFAULT: 5Hz)
   delay(REFRESH_RATE);
-
+  
   // create write string and mission params struct
   String packetString;
+  if (MISSION_PARAMS.PACKET_COUNT == 0)
+    ALT_START = 0;
+  else if (MISSION_PARAMS.PACKET_COUNT == 1)
+    ALT_START = BMP.readAltitude(SEALEVELPRESSURE_HPA); // define altitude datum
+
+  TIMESTAMP = millis();
+  MISSION_PARAMS.PACKET_COUNT++;
 
   // update mission_params
-  MISSION_PARAMS.MISSION_TIME = TIMESTAMP - START_TIME;
-  MISSION_PARAMS.PACKET_COUNT++;
-  MISSION_PARAMS.ALTITUDE = BMP.readAltitude(SEALEVELPRESSURE_HPA);// - ALT_START;
-  MISSION_PARAMS.PRESSURE = BMP.readPressure();
-  MISSION_PARAMS.TEMP = BMP.readTemperature();
-  MISSION_PARAMS.VOLTAGE = 0.0;
-  MISSION_PARAMS.GPS_LAT = GPS.latitude;
-  MISSION_PARAMS.GPS_LON = GPS.longitude;
-  packetString = csvParams(MISSION_PARAMS);
+  if (MISSION_PARAMS.FLIGHT_STATE > 0) {
+    MISSION_PARAMS.MISSION_TIME = TIMESTAMP - START_TIME;
+    MISSION_PARAMS.ALTITUDE = BMP.readAltitude(SEALEVELPRESSURE_HPA) - ALT_START;
+    MISSION_PARAMS.PRESSURE = BMP.readPressure();
+    MISSION_PARAMS.TEMP = BMP.readTemperature();
+    MISSION_PARAMS.VOLTAGE = 3.3;
+    MISSION_PARAMS.GPS_LAT = GPS.latitude;
+    MISSION_PARAMS.GPS_LON = GPS.longitude;
+    packetString = csvParams(MISSION_PARAMS);
+  }
 
   // main execution code
   switch (MISSION_PARAMS.FLIGHT_STATE) {
     case 0: // IDLE
       // wait for command to set flight state
-      MISSION_PARAMS.FLIGHT_STATE = 1;
+      if (Serial1.available() > 0) {
+        MISSION_START_CHAR = Serial1.read();
+        if (MISSION_START_CHAR == 'g') {
+          MISSION_PARAMS.FLIGHT_STATE = 1;
+          MISSION_PARAMS.PACKET_COUNT = 0;
+          START_TIME = TIMESTAMP;
+        }
+      }
       #ifdef SERIAL_DEBUG
         Serial.println(packetString);
       #endif
@@ -174,10 +191,10 @@ void loop() {
           delay(0.5);
         }
 
-        // TESTING
-        tone(BUZZER, 1000);
-        delay(1001);
-        noTone(BUZZER);      
+        // // TESTING
+        // tone(BUZZER, 1000);
+        // delay(1001);
+        // noTone(BUZZER);      
       }
       break;
     case 2: // DESCENT
@@ -197,10 +214,10 @@ void loop() {
       #ifdef SERIAL_DEBUG
         Serial.println(packetString);
       #endif
-      if (SENSOR_CNT % 15 == 0) {
+      if (SENSOR_CNT % 7 == 0) {
         tone(BUZZER, 1000);
       }
-      if (SENSOR_CNT % 20 == 0) {
+      if (SENSOR_CNT % 10 == 0) {
         noTone(BUZZER);
       }
       break;
@@ -212,10 +229,10 @@ void loop() {
   };
 
   // activate LEDs and buzzer
-  if (SENSOR_CNT % 15 == 0) {
+  if (SENSOR_CNT % 7 == 0) {
     digitalWrite(LED, HIGH);
   }
-  if (SENSOR_CNT % 20 == 0) {
+  if (SENSOR_CNT % 10 == 0) {
     digitalWrite(LED, LOW);
     SENSOR_CNT = 0;
   }
@@ -228,25 +245,25 @@ String csvParams(struct params MP) {
   String c = ",";
   
   //time variables
-  // float ss = floor(MP.MISSION_TIME / 1000);
-  // float mm = floor(ss / 60);
-  // float hh = floor(mm / 60);
-  // ss = ss / 60;
-  // mm = (int) mm % 60;
-  // char hours[2];
-  // char min[2];
-  // char sec[5];
-  // sprintf(hours, "%2d", hh);
-  // sprintf(min, "%2d", mm);
-  // sprintf(sec, "%5f", ss);
-  // char mTime[12];
-  // strcat(mTime,hours);
-  // strcat(mTime,":");
-  // strcat(mTime,min);
-  // strcat(mTime,":");
-  // strcat(mTime,sec);
+  float ss = floor(MP.MISSION_TIME / 1000);
+  float mm = floor(ss / 60);
+  float hh = floor(mm / 60);
+  ss = ss / 60;
+  mm = (int) mm % 60;
+  char hours[2];
+  char min[2];
+  char sec[5];
+  sprintf(hours, "%2d", hh);
+  sprintf(min, "%2d", mm);
+  sprintf(sec, "%5f", ss);
+  char mTime[12];
+  strcat(mTime,hours);
+  strcat(mTime,":");
+  strcat(mTime,min);
+  strcat(mTime,":");
+  strcat(mTime,sec);
 
-//   return MP.TEAM_ID + c + mTime + c + MP.PACKET_COUNT + c + MP.FLIGHT_STATE + c + MP.PL_STATE + c + MP.ALTITUDE + c + MP.PRESSURE + c + MP.TEMP + c + MP.VOLTAGE + c + MP.GPS_LAT + c + MP.GPS_LON;
+  // return MP.TEAM_ID + c + mTime + c + MP.PACKET_COUNT + c + MP.FLIGHT_STATE + c + MP.PL_STATE + c + MP.ALTITUDE + c + MP.PRESSURE + c + MP.TEMP + c + MP.VOLTAGE + c + MP.GPS_LAT + c + MP.GPS_LON;
 // }
 
   return MP.TEAM_ID + c + MP.MISSION_TIME + c + MP.PACKET_COUNT + c + MP.FLIGHT_STATE + c + MP.PL_STATE + c + MP.ALTITUDE + c + MP.PRESSURE + c + MP.TEMP + c + MP.VOLTAGE + c + MP.GPS_LAT + c + MP.GPS_LON;
